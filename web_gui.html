@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Karaoke Web GUI</title>
+  <style>
+    :root {
+      --card: #ffffff;
+      --text: #111827;
+      --muted: #6b7280;
+      --accent: #0d9488;
+      --border: #d1d5db;
+      --error: #b91c1c;
+      --ok: #065f46;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: "Noto Sans CJK SC", "Noto Sans", sans-serif;
+      color: var(--text);
+      background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+    }
+    .wrap {
+      max-width: 980px;
+      margin: 0 auto;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.06);
+    }
+    h1 {
+      margin: 0 0 16px;
+      font-size: 24px;
+    }
+    .hint {
+      margin: 0 0 18px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    form {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 180px 1fr;
+      gap: 14px;
+      align-items: center;
+    }
+    .row label {
+      font-size: 14px;
+    }
+    input, select {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      font-size: 14px;
+    }
+    .small {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: -4px;
+      margin-bottom: 2px;
+      grid-column: 2 / 3;
+    }
+    .actions {
+      margin-top: 8px;
+      display: flex;
+      gap: 10px;
+    }
+    .path-control {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .path-control input {
+      flex: 1;
+    }
+    .path-btn {
+      width: auto;
+      min-width: 64px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      background: #fff;
+      color: #374151;
+    }
+    button {
+      border: 0;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #fff;
+      padding: 10px 16px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .error, .ok {
+      margin-top: 16px;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 14px;
+    }
+    .error {
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      color: var(--error);
+    }
+    .ok {
+      background: #ecfdf5;
+      border: 1px solid #a7f3d0;
+      color: var(--ok);
+    }
+    .status-wrap {
+      margin-top: 16px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      background: #f9fafb;
+    }
+    .bar {
+      height: 12px;
+      background: #e5e7eb;
+      border-radius: 99px;
+      overflow: hidden;
+      margin: 8px 0 10px;
+    }
+    .bar-inner {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #14b8a6, #0d9488);
+      transition: width 0.2s ease;
+    }
+    .stage-now {
+      font-size: 14px;
+      margin: 0;
+    }
+    .stage-list {
+      margin: 10px 0 0;
+      padding-left: 18px;
+      color: #1f2937;
+      font-size: 14px;
+    }
+    .color-control {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .color-picker {
+      width: 44px;
+      height: 40px;
+      padding: 2px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .color-preview {
+      width: 22px;
+      height: 22px;
+      border-radius: 6px;
+      border: 1px solid #9ca3af;
+      background: #ffffff;
+      flex-shrink: 0;
+    }
+    .color-code {
+      min-width: 90px;
+      color: #374151;
+      font-size: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>AI Karaoke Web GUI</h1>
+    <p class="hint">在本机浏览器访问本页面，填入服务器本地文件路径后提交。</p>
+    <form id="runForm">
+      <div class="row">
+        <label for="song">输入歌曲路径</label>
+        <div class="path-control">
+          <input id="song" name="song" placeholder="/path/to/song.mp3" required>
+          <button type="button" class="path-btn" data-pick-field="song">选择</button>
+        </div>
+      </div>
+
+      <div class="row">
+        <label for="lyric">歌词 LRC 路径（可选）</label>
+        <div class="path-control">
+          <input id="lyric" name="lyric" placeholder="/path/to/song.lrc">
+          <button type="button" class="path-btn" data-pick-field="lyric">选择</button>
+        </div>
+      </div>
+      <div class="row"><div></div><div class="small">留空时会在歌曲同一文件夹下自动搜索同名 .lrc/.LRC 文件。</div></div>
+
+      <div class="row">
+        <label for="output">输出目录</label>
+        <div class="path-control">
+          <input id="output" name="output" placeholder="/path/to/output" required>
+          <button type="button" class="path-btn" data-pick-field="output">选择</button>
+        </div>
+      </div>
+
+      <div class="row">
+        <label for="inst">官方伴奏路径（可选）</label>
+        <div class="path-control">
+          <input id="inst" name="inst" placeholder="/path/to/official_inst.wav">
+          <button type="button" class="path-btn" data-pick-field="inst">选择</button>
+        </div>
+      </div>
+
+      <div class="row">
+        <label for="lang">语言</label>
+        <input id="lang" name="lang" value="ja" placeholder="ja / zh / en">
+      </div>
+      <div class="row">
+        <div></div>
+        <div class="small">
+          常用：ja / en / zh；
+          全部语言代码可查看
+          <a href="https://github.com/openai/whisper/blob/main/whisper/tokenizer.py" target="_blank" rel="noopener noreferrer">tokenizer.py</a>
+        </div>
+      </div>
+
+      <div class="row">
+        <label for="whisper_model">Whisper 模型（估计显存）</label>
+        <select id="whisper_model" name="whisper_model">
+          {{MODEL_OPTIONS}}
+        </select>
+      </div>
+
+      <div class="row">
+        <label for="kara_advance_ms">kara 提前(ms)</label>
+        <input id="kara_advance_ms" name="kara_advance_ms" type="number" min="0" step="1" value="3000">
+      </div>
+      <div class="row">
+        <div></div>
+        <div class="small">连续歌词序列的首句将提前显示该时长（毫秒）。常用：2000~4000。</div>
+      </div>
+
+      <div class="row">
+        <label for="kara_sep_threshold_ms">kara 分段阈值(ms)</label>
+        <input id="kara_sep_threshold_ms" name="kara_sep_threshold_ms" type="number" min="0" step="1" value="10000">
+      </div>
+      <div class="row">
+        <div></div>
+        <div class="small">两行歌词间隔超过该阈值时，会视为新段落并重新开始序列判定。</div>
+      </div>
+
+      <div class="row">
+        <label for="kara_primary_color">主色</label>
+        <div class="color-control">
+          <input id="kara_primary_color" name="kara_primary_color" value="{{DEFAULT_PRIMARY_COLOR}}">
+          <input id="primaryColorPicker" class="color-picker" type="color" value="#ffffff">
+          <span id="primaryColorPreview" class="color-preview"></span>
+          <span id="primaryColorCode" class="color-code">{{DEFAULT_PRIMARY_COLOR}}</span>
+        </div>
+      </div>
+
+      <div class="row">
+        <label for="kara_accent_color">强调色</label>
+        <div class="color-control">
+          <input id="kara_accent_color" name="kara_accent_color" value="{{DEFAULT_ACCENT_COLOR}}">
+          <input id="accentColorPicker" class="color-picker" type="color" value="#d81c2f">
+          <span id="accentColorPreview" class="color-preview"></span>
+          <span id="accentColorCode" class="color-code">{{DEFAULT_ACCENT_COLOR}}</span>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="runBtn" type="submit">开始生成</button>
+      </div>
+    </form>
+
+    <div id="errorBox" class="error" style="display:none;"></div>
+    <div id="okBox" class="ok" style="display:none;"></div>
+
+    <div class="status-wrap">
+      <p class="stage-now">当前阶段：<span id="stageNow">等待开始</span>（<span id="progressText">0%</span>）</p>
+      <div class="bar"><div id="barInner" class="bar-inner"></div></div>
+      <ol id="stageList" class="stage-list"></ol>
+    </div>
+  </div>
+  <script>
+    const form = document.getElementById("runForm");
+    const runBtn = document.getElementById("runBtn");
+    const barInner = document.getElementById("barInner");
+    const progressText = document.getElementById("progressText");
+    const stageNow = document.getElementById("stageNow");
+    const stageList = document.getElementById("stageList");
+    const errorBox = document.getElementById("errorBox");
+    const okBox = document.getElementById("okBox");
+    const pickerButtons = document.querySelectorAll(".path-btn");
+
+    const primaryText = document.getElementById("kara_primary_color");
+    const primaryPicker = document.getElementById("primaryColorPicker");
+    const primaryPreview = document.getElementById("primaryColorPreview");
+    const primaryCode = document.getElementById("primaryColorCode");
+
+    const accentText = document.getElementById("kara_accent_color");
+    const accentPicker = document.getElementById("accentColorPicker");
+    const accentPreview = document.getElementById("accentColorPreview");
+    const accentCode = document.getElementById("accentColorCode");
+
+    let pollTimer = null;
+
+    function assToHex(ass) {
+      const v = (ass || "").trim();
+      if (/^&H[0-9A-Fa-f]{8}$/.test(v)) {
+        const upper = v.toUpperCase();
+        const bb = upper.slice(4, 6);
+        const gg = upper.slice(6, 8);
+        const rr = upper.slice(8, 10);
+        return `#${rr}${gg}${bb}`;
+      }
+      return null;
+    }
+
+    function hexToAss(hex) {
+      const clean = hex.replace("#", "").toUpperCase();
+      const rr = clean.slice(0, 2);
+      const gg = clean.slice(2, 4);
+      const bb = clean.slice(4, 6);
+      return `&H00${bb}${gg}${rr}`;
+    }
+
+    function updateColorUi(textInput, picker, preview, codeLabel) {
+      const text = (textInput.value || "").trim().toUpperCase();
+      const hex = assToHex(text);
+      if (hex) {
+        textInput.value = text;
+        picker.value = hex;
+        preview.style.background = hex;
+        codeLabel.textContent = text;
+      } else {
+        preview.style.background = "#FFFFFF";
+        codeLabel.textContent = "格式错误";
+      }
+    }
+
+    function bindColorControl(textInput, picker, preview, codeLabel) {
+      textInput.addEventListener("input", () => {
+        updateColorUi(textInput, picker, preview, codeLabel);
+      });
+      picker.addEventListener("input", () => {
+        textInput.value = hexToAss(picker.value);
+        updateColorUi(textInput, picker, preview, codeLabel);
+      });
+      updateColorUi(textInput, picker, preview, codeLabel);
+    }
+
+    function setProgress(percent, stage) {
+      barInner.style.width = `${percent}%`;
+      progressText.textContent = `${percent}%`;
+      stageNow.textContent = stage || "等待开始";
+    }
+
+    function setHistory(items) {
+      stageList.innerHTML = "";
+      for (const item of items) {
+        const li = document.createElement("li");
+        li.textContent = item;
+        stageList.appendChild(li);
+      }
+    }
+
+    function showError(msg) {
+      errorBox.textContent = msg;
+      errorBox.style.display = "block";
+    }
+
+    function hideError() {
+      errorBox.style.display = "none";
+      errorBox.textContent = "";
+    }
+
+    function showOk(msg) {
+      okBox.textContent = msg;
+      okBox.style.display = "block";
+    }
+
+    function hideOk() {
+      okBox.style.display = "none";
+      okBox.textContent = "";
+    }
+
+    async function choosePath(field) {
+      try {
+        const res = await fetch(`/pick?field=${encodeURIComponent(field)}`);
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          showError(data.error || "打开选择器失败");
+          return;
+        }
+        if (!data.path) return;
+        const input = document.getElementById(field);
+        if (input) input.value = data.path;
+      } catch (err) {
+        showError("无法调用文件选择器。");
+      }
+    }
+
+    async function pollStatus() {
+      try {
+        const res = await fetch("/status");
+        const data = await res.json();
+        setProgress(data.progress || 0, data.stage || "等待开始");
+        setHistory(data.history || []);
+
+        if (data.status === "completed") {
+          runBtn.disabled = false;
+          showOk(`任务完成，ASS 文件：${data.result_path}`);
+          clearInterval(pollTimer);
+          pollTimer = null;
+          return;
+        }
+        if (data.status === "failed") {
+          runBtn.disabled = false;
+          showError(data.error || "任务失败");
+          clearInterval(pollTimer);
+          pollTimer = null;
+          return;
+        }
+      } catch (e) {
+        runBtn.disabled = false;
+        showError("状态轮询失败，请刷新页面后重试。");
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      hideError();
+      hideOk();
+      runBtn.disabled = true;
+      setHistory([]);
+      setProgress(0, "任务已提交，等待启动...");
+
+      const body = new URLSearchParams(new FormData(form));
+      try {
+        const res = await fetch("/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+          body: body.toString(),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          runBtn.disabled = false;
+          showError(data.error || "任务启动失败");
+          return;
+        }
+        if (pollTimer) clearInterval(pollTimer);
+        pollTimer = setInterval(pollStatus, 1000);
+        await pollStatus();
+      } catch (err) {
+        runBtn.disabled = false;
+        showError("请求失败，请检查服务是否正常运行。");
+      }
+    });
+
+    bindColorControl(primaryText, primaryPicker, primaryPreview, primaryCode);
+    bindColorControl(accentText, accentPicker, accentPreview, accentCode);
+    for (const btn of pickerButtons) {
+      btn.addEventListener("click", () => {
+        hideError();
+        choosePath(btn.dataset.pickField || "");
+      });
+    }
+  </script>
+</body>
+</html>

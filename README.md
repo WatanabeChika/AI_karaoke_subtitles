@@ -18,13 +18,31 @@
 - 对齐结果写入 `\kf` 中，实现自动打 k 轴，并对标点与空白做安全处理
 - 支持自定义卡拉 OK 主色和强调色
 
+## Windows 懒人一键运行（免配环境）
+
+项目内置在线安装脚本（Windows）：
+
+```text
+windows_online_installer/
+├── install_online.bat
+├── run_installed_gui.bat
+└── uninstall_online.bat
+```
+
+使用步骤：
+1. 双击 `install_online.bat`（在线安装隔离运行环境）
+2. 双击 `run_installed_gui.bat`（启动 Web GUI）
+3. 不再需要时双击 `uninstall_online.bat`（彻底清理安装目录）
+
 ## 项目结构
 
-- `main.py`：总入口（推荐）
+- `main.py`：CLI 总入口（推荐）
 - `separator.py`：人声/伴奏分离
 - `aligner.py`：LRC 解析 + Whisper 对齐 + 生成 ASS
 - `furigana.py`：日文注音注入
 - `kara_style.py`：分层样式与模板注释注入
+- `web_gui.py` / `web_gui.html`：本地 Web GUI
+- `windows_online_installer/`：Windows 在线安装/运行/卸载脚本
 
 ## 环境要求
 
@@ -98,11 +116,13 @@ ffmpeg -version
 
 ## 快速开始
 
+### CLI：基础用法
+
 ```bash
 python main.py -i /path/to/song.mp3 -l /path/to/song.lrc -o /path/to/output --lang ja
 ```
 
-### 不传 `--lyric`（自动寻找同名 LRC）
+### CLI：不传 `--lyric`（自动寻找同名 LRC）
 
 当音频同级目录下有同名 `.lrc` 文件时可省略：
 
@@ -110,7 +130,7 @@ python main.py -i /path/to/song.mp3 -l /path/to/song.lrc -o /path/to/output --la
 python main.py -i /path/to/song.mp3 -o /path/to/output --lang ja
 ```
 
-### 传入官方伴奏（跳过 Demucs）
+### CLI：传入官方伴奏（跳过 Demucs）
 
 ```bash
 python main.py \
@@ -121,6 +141,23 @@ python main.py \
   --lang ja
 ```
 
+## Web GUI 使用（本地端口）
+
+如果你更希望通过浏览器使用，启动本地 Web 服务：
+
+```bash
+python web_gui.py --host 127.0.0.1 --port 7860
+```
+
+然后浏览器访问：`http://127.0.0.1:7860`
+
+说明：
+- 页面文件为 `web_gui.html`
+- 表单里填写的是运行该服务机器上的本地文件路径
+- 每个路径输入框旁都提供“选择”按钮，可直接弹出本机文件/目录选择器
+- 语言栏提供常用 `ja/en/zh` 提示，并附带 Whisper 语言代码参考链接
+- 页面会显示任务阶段和进度条，不再展示原始控制台日志
+
 ## 常用参数说明（`main.py`）
 
 ```text
@@ -130,10 +167,10 @@ python main.py \
 --inst                       官方伴奏路径（可选）
 --lang                       歌曲语言，如 ja/zh/en
 --whisper-model              Whisper 模型：tiny/base/small/medium/large/turbo
---kara-advance-ms            卡拉 OK 提前量（ms）
---kara-sep-threshold-ms      卡拉 OK 序列切分阈值（ms）
---kara-primary-color         主色（ASS 颜色或名称）
---kara-accent-color          强调色（ASS 颜色或名称）
+--kara-advance-ms            首句歌词提前出现时间（ms）
+--kara-sep-threshold-ms      开启新歌词序列的间隔时间阈值（ms）
+--kara-primary-color         未经过的歌词颜色（ASS 颜色或名称）
+--kara-accent-color          经过后的歌词颜色（ASS 颜色或名称）
 ```
 
 Whisper 模型显存参考（FP16，近似值）：

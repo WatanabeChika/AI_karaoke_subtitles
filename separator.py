@@ -2,6 +2,7 @@ import argparse
 import os
 import shutil
 import subprocess
+import sys
 from typing import Tuple
 
 import librosa
@@ -11,6 +12,33 @@ from scipy.signal import correlate
 
 
 CALC_SR = 44100
+
+
+def _build_subprocess_env() -> dict:
+    env = os.environ.copy()
+    python_dir = os.path.dirname(sys.executable)
+    env_root = os.path.dirname(python_dir)
+    candidates = [
+        python_dir,
+        os.path.join(env_root, "Scripts"),
+        os.path.join(env_root, "Library", "bin"),
+        os.path.join(env_root, "Library", "usr", "bin"),
+        env_root,
+    ]
+    existing = [p for p in candidates if os.path.isdir(p)]
+    old_path = env.get("PATH", "")
+    env["PATH"] = os.pathsep.join(existing + ([old_path] if old_path else []))
+    return env
+
+
+def _build_demucs_command(output_dir: str, temp_audio: str) -> list[str]:
+    cli_name = "demucs.exe" if os.name == "nt" else "demucs"
+    if shutil.which(cli_name) or shutil.which("demucs"):
+        runner = "demucs"
+        return [runner, "--two-stems=vocals", "-o", output_dir, "-n", "htdemucs", temp_audio]
+
+    # Fallback for isolated runtime where script entrypoint may be missing from PATH.
+    return [sys.executable, "-m", "demucs.separate", "--two-stems=vocals", "-o", output_dir, "-n", "htdemucs", temp_audio]
 
 
 def _ensure_stereo_channels(audio: np.ndarray) -> np.ndarray:
@@ -103,7 +131,13 @@ def separate_audio(
         print("\n[1/4] No official instrumental, running Demucs...")
         temp_audio = os.path.join(output_dir, f"temp_process{ext}")
         shutil.copy(audio_path, temp_audio)
-        subprocess.run(["demucs", "--two-stems=vocals", "-o", output_dir, "-n", "htdemucs", temp_audio], check=True)
+        demucs_cmd = _build_demucs_command(output_dir=output_dir, temp_audio=temp_audio)
+        try:
+            subprocess.run(demucs_cmd, check=True, env=_build_subprocess_env())
+        except FileNotFoundError as e:
+            raise RuntimeError(
+                "Demucs command not found. Please ensure demucs is installed in the runtime environment."
+            ) from e
 
         separated_dir = os.path.join(output_dir, "htdemucs", "temp_process")
         shutil.copy(os.path.join(separated_dir, "vocals.wav"), final_vocal)

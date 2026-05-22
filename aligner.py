@@ -59,9 +59,20 @@ def _language_text_score(text: str, lang: str) -> float:
 
 
 def _select_preferred_line(cluster: List[Dict], lang: str) -> Dict:
-    best = cluster[0]
+    candidates = cluster
+    lang_l = lang.lower()
+
+    # For Japanese lyrics, prefer lines that contain kana when available.
+    # This avoids long Chinese translation/explanation lines at near-identical
+    # timestamps overpowering short Japanese originals by raw length.
+    if lang_l.startswith("ja"):
+        kana_candidates = [item for item in cluster if _char_profile(item["text"])["kana"] > 0]
+        if kana_candidates:
+            candidates = kana_candidates
+
+    best = candidates[0]
     best_score = _language_text_score(best["text"], lang)
-    for item in cluster[1:]:
+    for item in candidates[1:]:
         score = _language_text_score(item["text"], lang)
         if score > best_score:
             best = item
@@ -377,6 +388,28 @@ def _run_self_tests() -> None:
     assert lines[0]["text"] == "あの色も　この色も"
     assert abs(lines[0]["start_time"] - 0.0) < 1e-6
     assert lines[1]["text"] == "カラフル　溢(あふ)れる"
+
+    # Chinese explanatory text can be much longer than the Japanese original,
+    # but when lang=ja we should still prefer kana-containing Japanese lyrics.
+    long_zh_vs_ja = (
+        "[00:45.410]宴会拉开序慕\n"
+        "[00:45.414]宴の幕開け開始\n"
+        "[00:50.050]烟熏奶酪\n"
+        "[00:50.054]スモークチーズ\n"
+        "[00:51.760]做好了的Quiche（法国料理的一种。在馅饼的盘子中铺上馅饼的材料，加入培根，火腿，芝士等材料，浇上混入生奶油，牛奶的咸味蛋液，经烘箱烤制而成。用作餐前菜。）\n"
+        "[00:51.768]できたてのキッシュ\n"
+        "[00:53.840]红朴叶包起来的虹鳟\n"
+        "[00:53.848]朴葉で包んだヒメマス\n"
+    )
+    with tempfile.NamedTemporaryFile("w+", encoding="utf-8", suffix=".lrc", delete=True) as tmp:
+        tmp.write(long_zh_vs_ja)
+        tmp.flush()
+        lines = parse_lrc_data_strict(tmp.name, lang="ja")
+    assert len(lines) == 4
+    assert lines[0]["text"] == "宴の幕開け開始"
+    assert lines[1]["text"] == "スモークチーズ"
+    assert lines[2]["text"] == "できたてのキッシュ"
+    assert lines[3]["text"] == "朴葉で包んだヒメマス"
 
     # Dialogue end should follow aligned lyric end rather than the loose LRC boundary.
     current_time = 3.00
