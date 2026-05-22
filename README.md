@@ -20,7 +20,7 @@
 
 ## Windows 懒人一键运行（免配环境）
 
-项目内置在线安装脚本（Windows）：
+项目内置在线安装脚本（Windows，只支持对 Nvidia 显卡安装 GPU 版本 torch 以进行加速）：
 
 ```text
 windows_online_installer/
