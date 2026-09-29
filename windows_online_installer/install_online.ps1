@@ -175,16 +175,16 @@ try {
 }
 
 if ($hasNvidia) {
-    Write-Host "Installing CUDA-enabled torch/torchaudio (cu121)..."
+    Write-Host "Installing CUDA-enabled torch/torchaudio/torchcodec (cu121)..."
     try {
-        & $pythonExe -m pip install --upgrade torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+        & $pythonExe -m pip install --upgrade torch torchaudio torchcodec --index-url https://download.pytorch.org/whl/cu121
     } catch {
         Write-Host "CUDA wheel install failed, falling back to default torch packages."
-        & $pythonExe -m pip install --upgrade torch torchaudio
+        & $pythonExe -m pip install --upgrade torch torchaudio torchcodec
     }
 } else {
     Write-Host "No NVIDIA GPU detected, installing default torch packages."
-    & $pythonExe -m pip install --upgrade torch torchaudio
+    & $pythonExe -m pip install --upgrade torch torchaudio torchcodec
 }
 
 & $pythonExe -m pip install --upgrade stable-ts demucs librosa numpy scipy soundfile pykakasi

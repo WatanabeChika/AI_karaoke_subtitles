@@ -78,13 +78,13 @@ sudo apt install -y ffmpeg
 
 ```bash
 # 示例：CPU
-pip install torch torchaudio
+pip install torch torchaudio torchcodec
 
 # 示例：NVIDIA GPU（请将 cu121 替换为你机器匹配的 CUDA 版本）
-pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+pip install torch torchaudio torchcodec --index-url https://download.pytorch.org/whl/cu121
 
 # 示例：AMD GPU（请将 rocm6.2 替换为你机器匹配的 ROCm 版本）
-pip install torch torchaudio --index-url https://download.pytorch.org/whl/rocm6.2
+pip install torch torchaudio torchcodec --index-url https://download.pytorch.org/whl/rocm6.2
 ```
 
 验证显卡是否被成功识别：
