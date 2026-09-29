@@ -65,8 +65,7 @@ conda activate ai_karaoke
 ### 2) 安装系统依赖（ffmpeg）
 
 ```bash
-sudo apt update
-sudo apt install -y ffmpeg
+conda install -c conda-forge "ffmpeg"
 ```
 
 ### 3) 安装 PyTorch / Torchaudio（按你的 GPU/CUDA 选择）
