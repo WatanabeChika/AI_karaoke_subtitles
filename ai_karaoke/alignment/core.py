@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from itertools import zip_longest
 
 from ai_karaoke.alignment.models import AlignedToken, AlignmentUnit
 from ai_karaoke.alignment.text import romanize_pronunciation
@@ -22,6 +23,10 @@ class KaraokeTokenizer:
 
     def get_vocab(self) -> dict[str, int]:
         return dict(self._vocab)
+
+
+STAR_TOKEN = "<star>"
+STAR_SCORE_MARGIN = 0.1
 
 
 def build_alignment_sequence(
@@ -61,6 +66,37 @@ def _raw_token_spans(tokens, segments, blank):
     return spans
 
 
+def _with_unknown_audio_tokens(
+    tokens: list[str],
+    owners: list[tuple[int, AlignmentUnit]],
+) -> tuple[list[str], list[bool]]:
+    """Allow untranscribed audio at window edges and between lyric lines."""
+    sequence = [STAR_TOKEN]
+    lyric_mask = [False]
+    previous_line = None
+    for token, owner in zip_longest(tokens, owners):
+        if token is None or owner is None:
+            raise ValueError("Alignment tokens and owners must have equal lengths")
+        line_index = owner[0]
+        if previous_line is not None and line_index != previous_line:
+            sequence.append(STAR_TOKEN)
+            lyric_mask.append(False)
+        sequence.append(token)
+        lyric_mask.append(True)
+        previous_line = line_index
+    sequence.append(STAR_TOKEN)
+    lyric_mask.append(False)
+    return sequence, lyric_mask
+
+
+def _calibrate_unknown_audio_score(emissions):
+    """Keep the synthetic star competitive without overpowering real labels."""
+    calibrated = emissions.clone()
+    best_model_score = calibrated[:, :-1].max(dim=-1).values
+    calibrated[:, -1] = best_model_score - STAR_SCORE_MARGIN
+    return calibrated
+
+
 def align_sequence(
     emissions,
     stride_ms: float,
@@ -71,8 +107,14 @@ def align_sequence(
 ) -> list[list[AlignedToken]]:
     from ctc_forced_aligner import get_alignments
 
-    segments, scores, blank = get_alignments(emissions, tokens, KaraokeTokenizer())
-    spans = _raw_token_spans(tokens, segments, blank)
+    alignment_tokens, lyric_mask = _with_unknown_audio_tokens(tokens, owners)
+    segments, scores, blank = get_alignments(
+        _calibrate_unknown_audio_score(emissions),
+        alignment_tokens,
+        KaraokeTokenizer(),
+    )
+    all_spans = _raw_token_spans(alignment_tokens, segments, blank)
+    spans = [span for span, is_lyric in zip(all_spans, lyric_mask) if is_lyric]
     if len(spans) != len(owners):
         raise RuntimeError(f"CTC returned {len(spans)} spans for {len(owners)} transcript units")
 

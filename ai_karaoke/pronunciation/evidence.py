@@ -10,26 +10,29 @@ from ai_karaoke.pronunciation.reading import (
     reading_text,
     speech_text,
 )
+from ai_karaoke.pronunciation.spelling import propose_spelling_readings
 
 
-def propose_whisper_readings(lyric: str, heard: str) -> list[dict]:
-    """Map a local kana difference to its single unambiguous kanji unit."""
-    converter = JapaneseReadingConverter()
+def propose_whisper_readings(
+    lyric: str, heard: str, readings: dict[str, str] | None = None
+) -> list[dict]:
+    """Use unique kanji spellings or anchored local kana differences."""
+    converter = JapaneseReadingConverter(readings)
     units = converter.convert(speech_text(lyric))
     target = reading_text(heard, converter)
     if not target:
         return []
 
-    readings = [reading_text(unit["hira"], converter) for unit in units]
-    expected = "".join(readings)
+    unit_readings = [reading_text(unit["hira"], converter) for unit in units]
+    expected = "".join(unit_readings)
     spans = []
     offset = 0
-    for reading in readings:
+    for reading in unit_readings:
         spans.append((offset, offset + len(reading)))
         offset += len(reading)
 
     matcher = difflib.SequenceMatcher(None, expected, target, autojunk=False)
-    proposals = []
+    proposals = propose_spelling_readings(units, heard, converter)
     for tag, expected_start, expected_end, heard_start, heard_end in matcher.get_opcodes():
         if tag == "equal":
             continue
@@ -43,6 +46,8 @@ def propose_whisper_readings(lyric: str, heard: str) -> list[dict]:
             continue
         index = kanji_units[0]
         base = units[index]["orig"]
+        if any(base in proposal["base"] for proposal in proposals):
+            continue
         if sum(unit["orig"] == base for unit in units) != 1:
             continue
         unit_start, unit_end = spans[index]
@@ -66,7 +71,7 @@ def propose_whisper_readings(lyric: str, heard: str) -> list[dict]:
             else:
                 mapped.append(target[target_left:target_right])
         reading = "".join(mapped)
-        dictionary = readings[index]
+        dictionary = unit_readings[index]
         if not reading or len(reading) > 16 or reading == dictionary:
             continue
         proposal = {
@@ -99,6 +104,7 @@ def select_whisper_evidence(
     start: float,
     end: float,
     lyric: str | None = None,
+    readings: dict[str, str] | None = None,
 ) -> dict:
     """Select the lyric-like contiguous ASR span from a generous time window."""
     candidates = [word for word in words if word["end"] >= start and word["start"] <= end]
@@ -106,8 +112,8 @@ def select_whisper_evidence(
     match_ratio = None
     prefix_complete = suffix_complete = False
     lyric_coverage = 0.0
+    converter = JapaneseReadingConverter(readings) if lyric else None
     if lyric and candidates:
-        converter = JapaneseReadingConverter()
         target = reading_text(lyric, converter)
         best = None
         window_midpoint = (start + end) / 2
@@ -149,8 +155,8 @@ def select_whisper_evidence(
 
     selected_text = "".join(word["text"] for word in selected).strip()
     if lyric:
-        expected = reading_text(lyric)
-        heard = reading_text(selected_text)
+        expected = reading_text(lyric, converter)
+        heard = reading_text(selected_text, converter)
         prefix_complete, suffix_complete, lyric_coverage = _lyric_edge_coverage(expected, heard)
 
     probabilities = [

@@ -15,6 +15,7 @@ from ai_karaoke.interfaces.console import (
     configure_runtime_output,
 )
 from ai_karaoke.lyrics.parser import parse_lrc_data_strict
+from ai_karaoke.pronunciation.reading import merge_readings
 from ai_karaoke.pronunciation.ruby import apply_furigana_to_ass
 from ai_karaoke.pronunciation.whisper import (
     DEFAULT_FURIGANA_WHISPER_MODEL,
@@ -179,6 +180,8 @@ def build_alignment_report(lines: List[dict], aligned: List[List[AlignedToken]])
         }
         if line.get("harmony_decisions"):
             item["inline_harmonies"] = line["harmony_decisions"]
+        if line.get("alignment_readings"):
+            item["alignment_readings"] = line["alignment_readings"]
         report.append(item)
         previous_end = max(previous_end or end, end)
         previous_hint = line["start_time"]
@@ -217,7 +220,10 @@ def generate_karaoke_ass(
         del aligner
         alignment_report = build_alignment_report(lines, aligned)
 
-    readings = [dict(line["readings"]) for line in lines]
+    readings = [
+        merge_readings(line.get("alignment_readings", {}), line.get("readings", {}))
+        for line in lines
+    ]
     pronunciation_report = []
     stage_four = "Checking Japanese pronunciation" if use_whisper_readings else "Skipping pronunciation ASR"
     with reporter.stage(4, 5, stage_four):
@@ -228,10 +234,9 @@ def generate_karaoke_ass(
                     torch.cuda.empty_cache()
             except ImportError:
                 pass
-            whisper_readings, pronunciation_report = detect_whisper_readings(
+            readings, pronunciation_report = detect_whisper_readings(
                 audio, sample_rate, lines, aligned, furigana_whisper_model
             )
-            readings = [{**heard, **explicit} for explicit, heard in zip(readings, whisper_readings)]
 
     pronunciation_report_path = None
     with reporter.stage(5, 5, "Rendering reports and ASS"):

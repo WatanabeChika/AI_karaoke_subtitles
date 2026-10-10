@@ -8,6 +8,7 @@ import os
 from ai_karaoke.alignment.core import align_sequence, build_alignment_sequence
 from ai_karaoke.alignment.harmony import filter_overlapping_inline_harmonies
 from ai_karaoke.alignment.models import AlignedToken, AlignmentResult
+from ai_karaoke.alignment.readings import refine_ambiguous_readings
 from ai_karaoke.alignment.text import NUMBER_READING_MODES, build_alignment_units
 from ai_karaoke.alignment.windows import (
     block_windows,
@@ -124,6 +125,24 @@ class KaraokeCtcAligner:
             for line_index in block:
                 aligned[line_index] = local[line_index]
 
+        for index in parallel_indices:
+            window_start, window_end = parallel_window(lines, index, duration)
+            frame_start = max(0, int(window_start * 1000 / stride_ms))
+            frame_end = min(len(emissions), int(math.ceil(window_end * 1000 / stride_ms)))
+            tokens, owners = build_alignment_sequence([index], units_per_line)
+            local = align_sequence(
+                emissions[frame_start:frame_end],
+                stride_ms,
+                tokens,
+                owners,
+                len(lines),
+                offset_sec=frame_start * stride_ms / 1000,
+            )
+            aligned[index] = local[index]
+
+        refine_ambiguous_readings(
+            emissions, stride_ms, lines, units_per_line, aligned, duration
+        )
         recover_drifted_primary_lines(
             emissions,
             stride_ms,
@@ -141,21 +160,6 @@ class KaraokeCtcAligner:
             aligned,
             duration,
         )
-
-        for index in parallel_indices:
-            window_start, window_end = parallel_window(lines, index, duration)
-            frame_start = max(0, int(window_start * 1000 / stride_ms))
-            frame_end = min(len(emissions), int(math.ceil(window_end * 1000 / stride_ms)))
-            tokens, owners = build_alignment_sequence([index], units_per_line)
-            local = align_sequence(
-                emissions[frame_start:frame_end],
-                stride_ms,
-                tokens,
-                owners,
-                len(lines),
-                offset_sec=frame_start * stride_ms / 1000,
-            )
-            aligned[index] = local[index]
 
         for index, tokens in enumerate(aligned, start=1):
             if not tokens:

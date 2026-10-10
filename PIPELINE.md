@@ -22,9 +22,15 @@
 - Convert Japanese text to context-sensitive readings, romanize those readings for
   MMS CTC, and retain each unit's original display text. Replacing the display text
   itself would lose the identity needed to render timestamps back to the lyric.
+- Keep punctuation, whitespace, emoji, and other decorations in display text while
+  excluding them from CTC units. Unicode-compatible kana, Latin letters, and digits
+  are normalized before alignment; decoration-only timestamp rows are skipped.
 - Align small blocks with their complete previous and next lyric lines as context.
   This avoids cropping the first or last sung syllable without making repeated
   choruses compete in a single whole-song transcript.
+- Add CTC `<star>` gaps at both window edges and between adjacent lyric lines.
+  The gaps absorb sung audio missing from the LRC, so an omitted pickup or call
+  does not force the following lyric onto the wrong acoustic event.
 - Treat LRC timestamps as search hints. They bound the window but never overwrite
   model timestamps. Drift, overlap, and zero-duration tokens are recorded in
   `*_alignment_report.json`.
@@ -44,16 +50,25 @@ Precedence is:
 
 1. An attached LRC reading such as `頬(ほほ)`.
 2. A Whisper-derived reading when the heard kana difference maps to exactly one
-   kanji unit and the evidence passes confidence, lyric-similarity, and coverage
-   checks. A single edge kanji may use one-sided evidence; multi-kanji edge guesses
-   are rejected.
-3. The lexical-context Sudachi/kanjiconv reading.
+   unique kanji spelling and the evidence passes confidence, lyric-similarity,
+   and coverage checks. A single edge kanji may use one-sided evidence;
+   multi-kanji edge guesses are rejected.
+3. An alternate dictionary reading selected acoustically by CTC for a unique,
+   low-confidence kanji unit. The entire line is re-aligned and the alternative
+   is retained only when that unit improves without degrading the line.
+4. The lexical-context Sudachi/kanjiconv reading.
 
 Whisper is never allowed to alter non-kanji text. Unanchored discrepancies remain
 in `*_pronunciation_report.json`; they do not silently modify the subtitle. The
 report contains every lyric line with kanji, including matched lines and lines with
 no usable ASR evidence, and records dictionary, heard, final, explicit, and applied
 readings separately.
+
+Equivalent old and new kanji spellings are normalized only for matching evidence.
+This lets a uniquely heard whole word such as `毎日` correct source spelling
+`每日`, even when the source was split into multiple dictionary units. Repeated
+spellings are deliberately left unresolved because a line-level override would
+also alter occurrences for which there is no acoustic evidence.
 
 Sudachi morpheme readings are consumed once in their original sentence context,
 then the resolved readings are reused while rendering split karaoke tags
@@ -71,8 +86,9 @@ The pronunciation report uses these statuses:
 | `incomplete_or_unreliable` | ASR evidence is present but fails whole-line checks. |
 | `no_asr_evidence` | Neither whole-song ASR nor the local retry supplies words. |
 
-`dictionary` contains the baseline reading after LRC overrides; `final_kana`
-contains the chosen reading. `applied_readings` contains effective Whisper
+`dictionary` contains the effective pre-Whisper baseline after CTC and LRC
+overrides; `final_kana` contains the chosen reading. `alignment_readings` records
+the accepted CTC alternatives, `applied_readings` records all effective automatic
 overrides, and `explicit_readings` contains LRC overrides. Whole-line
 `asr_accepted` is independent of local correction: a missing ending need not block
 a well-supported correction earlier in the line. Edge coverage compares kana

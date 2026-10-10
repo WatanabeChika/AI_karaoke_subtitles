@@ -19,40 +19,129 @@ ENGLISH_DIGITS = {
     "4": "four", "5": "five", "6": "six", "7": "seven",
     "8": "eight", "9": "nine",
 }
+KATAKANA_COMPATIBILITY_READINGS = {
+    **dict(zip(
+        "ㇰㇱㇲㇳㇴㇵㇶㇷㇸㇹㇺㇻㇼㇽㇾㇿ",
+        "クシストヌハヒフヘホムラリルレロ",
+    )),
+    "ヷ": "ヴァ",
+    "ヸ": "ヴィ",
+    "ヹ": "ヴェ",
+    "ヺ": "ヴォ",
+}
+KANA_ITERATION_MARKS = "ゝゞヽヾ"
+KANA_MODIFIERS = "っッーｰ" + KANA_ITERATION_MARKS
 
 
-def _is_kana(char: str) -> bool:
-    return "\u3040" <= char <= "\u30ff" or "\u31f0" <= char <= "\u31ff"
+def _is_kana_letter(char: str) -> bool:
+    """Return whether *char* is a kana letter, excluding block punctuation."""
+    code = ord(char)
+    return (
+        0x3041 <= code <= 0x3096
+        or code == 0x309F
+        or 0x30A1 <= code <= 0x30FA
+        or code == 0x30FF
+        or 0x31F0 <= code <= 0x31FF
+        or 0xFF66 <= code <= 0xFF9D
+    )
 
 
-def _split_kana_mora(text: str) -> list[str]:
-    small = set("ぁぃぅぇぉゃゅょゎァィゥェォャュョヮヵヶ")
-    morae: list[str] = []
-    pending_sokuon = ""
+def _is_kana_component(char: str) -> bool:
+    return (
+        _is_kana_letter(char)
+        or char in KANA_MODIFIERS
+        or char in "ﾞﾟ"
+        or unicodedata.combining(char) != 0
+    )
+
+
+def _is_decoration(text: str) -> bool:
+    """Return whether text contains no letter or number meant to be sung."""
+    return bool(text) and not any(
+        unicodedata.category(char)[0] in "LN"
+        and char not in "ーｰﾞﾟ" + KANA_ITERATION_MARKS
+        for char in text
+    )
+
+
+def _text_clusters(text: str) -> list[str]:
+    """Group combining and halfwidth sound marks with their base character."""
+    clusters: list[str] = []
     for char in text:
-        if char in "っッ":
-            pending_sokuon += char
-        elif char in small or char == "ー" or unicodedata.combining(char):
-            if morae:
-                morae[-1] += char
-            elif pending_sokuon:
-                pending_sokuon += char
-            else:
-                morae.append(char)
-        elif _is_kana(char):
-            morae.append(pending_sokuon + char)
-            pending_sokuon = ""
-        elif pending_sokuon:
-            morae.append(pending_sokuon)
-            pending_sokuon = ""
-    if pending_sokuon:
-        morae.append(pending_sokuon)
-    return morae
+        if clusters and (unicodedata.combining(char) or char in "ﾞﾟ"):
+            clusters[-1] += char
+        else:
+            clusters.append(char)
+    return clusters
+
+
+def _normalize_kana(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text)
+    expanded = "".join(
+        KATAKANA_COMPATIBILITY_READINGS.get(char, char) for char in normalized
+    )
+    return unicodedata.normalize("NFC", expanded)
+
+
+def _repeat_kana(previous: str, mark: str) -> str:
+    if not previous:
+        return ""
+    base = "".join(
+        char for char in unicodedata.normalize("NFD", previous[-1])
+        if not unicodedata.combining(char)
+    )
+    if not base:
+        return ""
+    if mark in "ゞヾ":
+        return unicodedata.normalize("NFC", base[-1] + "\u3099")
+    return base[-1]
+
+
+def _split_kana_mora(text: str) -> list[AlignmentUnit]:
+    small = set("ぁぃぅぇぉゃゅょゎァィゥェォャュョヮヵヶ")
+    morae: list[list[str]] = []
+    pending_display = ""
+    pending_reading = ""
+    for display in _text_clusters(text):
+        reading = _normalize_kana(display)
+        if reading.isspace() or (_is_decoration(reading) and reading not in KANA_MODIFIERS):
+            continue
+        if reading in "っッ":
+            pending_display += display
+            pending_reading += reading
+            continue
+        if reading in KANA_ITERATION_MARKS:
+            previous = morae[-1][1] if morae else pending_reading
+            repeated = _repeat_kana(previous, reading)
+            if repeated:
+                morae.append([pending_display + display, pending_reading + repeated])
+            pending_display = pending_reading = ""
+            continue
+        if (reading in small or reading == "ー") and morae:
+            morae[-1][0] += display
+            morae[-1][1] += reading
+            continue
+        if any(_is_kana_letter(char) for char in reading):
+            morae.append([pending_display + display, pending_reading + reading])
+            pending_display = pending_reading = ""
+    if pending_reading:
+        morae.append([pending_display, pending_reading])
+    return [AlignmentUnit(display, reading) for display, reading in morae if reading]
+
+
+def _ascii_digit(digit: str) -> str | None:
+    try:
+        return str(unicodedata.digit(digit))
+    except (TypeError, ValueError):
+        return None
 
 
 def _digit_reading(digit: str, number_reading: str) -> str:
     table = ENGLISH_DIGITS if number_reading == "en" else JAPANESE_DIGITS
-    return table[digit]
+    value = _ascii_digit(digit)
+    if value is None or value not in table:
+        raise ValueError(f"Unsupported numeric lyric character: {digit!r}")
+    return table[value]
 
 
 def _split_kanji_reading(original: str, reading: str) -> list[AlignmentUnit]:
@@ -67,20 +156,28 @@ def _expand_reading_unit(
     reading: str,
     number_reading: str = "ja",
 ) -> list[AlignmentUnit]:
+    # Sudachi may emit empty analysis nodes beside punctuation such as an
+    # ellipsis. They do not represent lyric text and must never enter CTC.
+    if not original:
+        return []
     if contains_kanji(original):
         return _split_kanji_reading(original, reading)
-    if original and all(_is_kana(char) or char.isspace() for char in original):
-        return [AlignmentUnit(mora, mora) for mora in _split_kana_mora(original)]
+    if original and all(_is_kana_component(char) or char.isspace() for char in original):
+        return _split_kana_mora(original)
     if any(char.isdigit() for char in original):
         return [
             AlignmentUnit(char, _digit_reading(char, number_reading))
             for char in original
             if char.isdigit()
         ]
-    return [
-        AlignmentUnit(match.group(), match.group())
-        for match in re.finditer(r"[A-Za-z]+(?:'[A-Za-z]+)*", original)
-    ]
+    normalized = unicodedata.normalize("NFKC", original)
+    if re.fullmatch(r"[A-Za-z]+(?:'[A-Za-z]+)*", normalized):
+        return [AlignmentUnit(original, normalized)]
+    if _is_decoration(original):
+        return []
+    # Keep unsupported letters visible in the transcript validation error.
+    # Silently dropping them would produce a plausible but incorrect alignment.
+    return [AlignmentUnit(original, reading or original)]
 
 
 def resolve_number_reading(text: str, mode: str) -> str:
@@ -88,8 +185,9 @@ def resolve_number_reading(text: str, mode: str) -> str:
         raise ValueError(f"number_reading must be one of {NUMBER_READING_MODES}, got {mode!r}")
     if mode != "auto":
         return mode
-    has_latin = any("A" <= char.upper() <= "Z" for char in text)
-    has_kana = any(_is_kana(char) for char in text)
+    normalized = unicodedata.normalize("NFKC", text)
+    has_latin = any("A" <= char.upper() <= "Z" for char in normalized)
+    has_kana = any(_is_kana_letter(char) for char in normalized)
     return "en" if has_latin and not has_kana else "ja"
 
 
@@ -115,10 +213,11 @@ def build_alignment_units(
 def romanize_pronunciation(text: str, number_reading: str = "auto") -> str:
     from pykakasi import kakasi
 
+    text = unicodedata.normalize("NFKC", text)
     resolved_number_reading = resolve_number_reading(text, number_reading)
     if any(char.isdigit() for char in text):
         table = ENGLISH_DIGITS if resolved_number_reading == "en" else JAPANESE_DIGITS
-        text = "".join(table.get(char, char) for char in text)
+        text = "".join(table.get(_ascii_digit(char) or "", char) for char in text)
     converted = kakasi().convert(text)
     romanized = "".join(item.get("hepburn", "") for item in converted).casefold()
     romanized = unicodedata.normalize("NFKD", romanized).encode("ascii", "ignore").decode("ascii")

@@ -122,6 +122,15 @@ def _char_profile(text: str) -> Dict[str, int]:
     }
 
 
+def _has_lyric_content(text: str) -> bool:
+    """Exclude timestamped decoration-only rows before model alignment."""
+    non_speech_modifiers = "ーｰﾞﾟゝゞヽヾ"
+    return any(
+        unicodedata.category(char)[0] in "LN" and char not in non_speech_modifiers
+        for char in text
+    )
+
+
 def _is_japanese_parenthetical(text: str) -> bool:
     if not re.fullmatch(r"[（(].+[）)]", text):
         return False
@@ -167,6 +176,8 @@ def parse_lrc_data_strict(lrc_path: str, lang: str = "ja") -> List[Dict]:
             text = _split_translation(text)
             # Explicit parenthetical readings are metadata, not harmony.
             text, readings = _extract_readings(text)
+            if not _has_lyric_content(text):
+                continue
             main_text, inline_harmonies = extract_inline_harmonies(text)
             inline_parts = split_inline_harmony_parts(text) if inline_harmonies else []
             if not text:

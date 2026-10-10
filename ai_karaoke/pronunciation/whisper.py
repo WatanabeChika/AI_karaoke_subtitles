@@ -13,6 +13,7 @@ from ai_karaoke.pronunciation.evidence import (
 from ai_karaoke.pronunciation.reading import (
     JapaneseReadingConverter,
     contains_kanji,
+    merge_readings,
     reading_text,
 )
 
@@ -126,8 +127,21 @@ def _retry_whisper_line(model, audio, line_start: float, line_end: float) -> lis
     return _collect_whisper_words(result, offset=start)
 
 
+def _line_readings(line: dict) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    """Return explicit, usable CTC, and effective pre-Whisper readings."""
+    explicit = dict(line.get("readings", {}))
+    effective = merge_readings(line.get("alignment_readings", {}), explicit)
+    alignment = {
+        base: reading
+        for base, reading in effective.items()
+        if base not in explicit
+    }
+    return explicit, alignment, effective
+
+
 def _empty_alignment_report(line: dict) -> dict:
-    dictionary = reading_text(line["text"], JapaneseReadingConverter(line["readings"]))
+    explicit, alignment, effective = _line_readings(line)
+    dictionary = reading_text(line["text"], JapaneseReadingConverter(effective))
     return {
         "lyric": line["text"],
         "heard": "",
@@ -147,8 +161,9 @@ def _empty_alignment_report(line: dict) -> dict:
         "suffix_complete": False,
         "rejection_reasons": ["no_alignment_tokens"],
         "proposals": [],
-        "applied_readings": {},
-        "explicit_readings": line["readings"],
+        "applied_readings": alignment,
+        "alignment_readings": alignment,
+        "explicit_readings": explicit,
     }
 
 
@@ -165,11 +180,12 @@ def detect_whisper_readings(
     reports = []
     readings = []
     for line, tokens in zip(lines, aligned):
+        explicit, alignment, baseline = _line_readings(line)
         if not contains_kanji(line["text"]):
-            readings.append({})
+            readings.append(baseline)
             continue
         if not tokens:
-            readings.append({})
+            readings.append(baseline)
             reports.append(_empty_alignment_report(line))
             continue
 
@@ -177,37 +193,52 @@ def detect_whisper_readings(
         aligned_start = min(token.start for token in timed_tokens) if timed_tokens else tokens[0].start
         start = max(0.0, aligned_start - 2.0)
         end = min(len(audio) / sample_rate, max(token.end for token in tokens) + 2.0)
-        evidence = select_whisper_evidence(words, start, end, lyric=line["text"])
+        evidence = select_whisper_evidence(
+            words, start, end, lyric=line["text"], readings=baseline
+        )
         if not evidence.get("prefix_complete") or not evidence.get("suffix_complete"):
             retry_words = _retry_whisper_line(
                 model, transcribed_audio, aligned_start, max(token.end for token in tokens)
             )
-            retry = select_whisper_evidence(retry_words, start, end, lyric=line["text"])
+            retry = select_whisper_evidence(
+                retry_words, start, end, lyric=line["text"], readings=baseline
+            )
             if evidence_rank(retry) > evidence_rank(evidence):
                 evidence = retry
 
         heard = evidence["text"]
         proposals = (
-            propose_whisper_readings(line["text"], heard)
+            propose_whisper_readings(line["text"], heard, readings=baseline)
             if evidence["accepted"] or local_reading_evidence_is_usable(evidence)
             else []
         )
-        dictionary = reading_text(line["text"], JapaneseReadingConverter(line["readings"]))
+        dictionary = reading_text(line["text"], JapaneseReadingConverter(baseline))
         final_kana = dictionary
-        override = {}
+        machine_readings = dict(alignment)
+        whisper_applied = False
         for proposal in proposals:
-            if proposal["accepted"] and proposal["base"] not in line["readings"]:
-                candidate = {**override, proposal["base"]: proposal["reading"]}
+            if (
+                proposal["accepted"]
+                and not any(
+                    proposal["base"] in base or base in proposal["base"]
+                    for base in explicit
+                )
+            ):
+                candidate = merge_readings(
+                    machine_readings, {proposal["base"]: proposal["reading"]}
+                )
                 candidate_kana = reading_text(
                     line["text"],
-                    JapaneseReadingConverter({**candidate, **line["readings"]}),
+                    JapaneseReadingConverter({**candidate, **explicit}),
                 )
                 if candidate_kana != final_kana:
-                    override = candidate
+                    machine_readings = candidate
                     final_kana = candidate_kana
-        readings.append(override)
+                    whisper_applied = True
+        effective = {**machine_readings, **explicit}
+        readings.append(effective)
         heard_kana = reading_text(heard)
-        if override:
+        if whisper_applied or alignment:
             status = "corrected"
         elif proposals:
             status = "explicit_reading_retained"
@@ -238,8 +269,9 @@ def detect_whisper_readings(
             "suffix_complete": evidence["suffix_complete"],
             "rejection_reasons": evidence["reasons"],
             "proposals": proposals,
-            "applied_readings": override,
-            "explicit_readings": line["readings"],
+            "applied_readings": machine_readings,
+            "alignment_readings": alignment,
+            "explicit_readings": explicit,
         })
     del model
     if torch.cuda.is_available():

@@ -42,6 +42,18 @@ def speech_text(text: str) -> str:
     )
 
 
+def merge_readings(
+    baseline: dict[str, str], overrides: dict[str, str]
+) -> dict[str, str]:
+    """Apply higher-priority readings even across different word boundaries."""
+    retained = {
+        base: reading
+        for base, reading in baseline.items()
+        if not any(base in key or key in base for key in overrides)
+    }
+    return {**retained, **overrides}
+
+
 class JapaneseReadingConverter:
     def __init__(self, readings=None):
         from kanjiconv import KanjiConv

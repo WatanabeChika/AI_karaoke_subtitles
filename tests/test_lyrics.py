@@ -100,6 +100,13 @@ class LyricsTests(unittest.TestCase):
         lines = self.parse("\ufeff[00:01.2][00:03.250]歌う\n[00:05.00]終わり\n")
         self.assertEqual([line["start_time"] for line in lines], [1.2, 3.25, 5.0])
 
+    def test_discards_decoration_only_rows_but_keeps_decorated_lyrics(self):
+        lines = self.parse(
+            "[00:01.00]・・・♪♡👩‍🎤ーー\n"
+            "[00:02.00]☆ア・ナ・タ♡\n"
+        )
+        self.assertEqual([line["text"] for line in lines], ["☆ア・ナ・タ♡"])
+
     def test_translation_separator_works_inside_multiline_harmony_parentheses(self):
         lines = self.parse(
             "[00:01.00](We are proud / 中文翻译\n"

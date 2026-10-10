@@ -9,7 +9,7 @@ from ai_karaoke.pronunciation.evidence import (
     propose_whisper_readings,
     select_whisper_evidence,
 )
-from ai_karaoke.pronunciation.reading import JapaneseReadingConverter
+from ai_karaoke.pronunciation.reading import JapaneseReadingConverter, merge_readings
 from ai_karaoke.pronunciation.ruby import (
     annotate_karaoke_text_with_furigana,
     apply_furigana_to_ass,
@@ -21,6 +21,12 @@ RETRY = "ai_karaoke.pronunciation.whisper._retry_whisper_line"
 
 
 class FuriganaTests(unittest.TestCase):
+    def test_higher_priority_reading_removes_overlapping_lower_priority_key(self):
+        self.assertEqual(
+            merge_readings({"明日": "あした", "空": "そら"}, {"明": "みょう"}),
+            {"空": "そら", "明": "みょう"},
+        )
+
     def test_lrc_reading_overrides_dictionary(self):
         sample = (
             "[Events]\n"
@@ -52,6 +58,30 @@ class FuriganaTests(unittest.TestCase):
         )
         self.assertEqual(propose_whisper_readings("奏でた夢重ね", "かなでた夢重ね"), [])
         self.assertEqual(propose_whisper_readings("何度でも君と", "どでも君と"), [])
+
+    def test_variant_spelling_can_merge_a_whole_heard_kanji_word(self):
+        self.assertEqual(
+            propose_whisper_readings(
+                "砂漠で迷ってるよ每日は辛い",
+                "砂漠で迷ってるような毎日は辛い",
+            ),
+            [{
+                "base": "每日", "dictionary": "ごとひ",
+                "reading": "まいにち", "accepted": True,
+            }],
+        )
+        self.assertEqual(propose_whisper_readings("每日每日", "毎日毎日"), [])
+        self.assertEqual(
+            propose_whisper_readings(
+                "砂漠で迷ってるよ每日は辛い",
+                "砂漠で迷ってるような毎日は辛い",
+                {"日": "にち"},
+            ),
+            [{
+                "base": "每", "dictionary": "ごと",
+                "reading": "まい", "accepted": True,
+            }],
+        )
 
     def test_dictionary_reading_uses_lexical_context_for_compound_verbs(self):
         converter = JapaneseReadingConverter()
@@ -122,11 +152,54 @@ class FuriganaTests(unittest.TestCase):
         lines = [{"text": "未だ知らない", "start_time": 1.0, "readings": {"未": "み"}}]
         aligned = [[AlignedToken("未だ知らない", 1.0, 2.5)]]
         readings, reports = detect_whisper_readings(audio, 16000, lines, aligned)
-        self.assertEqual(readings, [{}])
+        self.assertEqual(readings, [{"未": "み"}])
         self.assertEqual(reports[0]["status"], "explicit_reading_retained")
         self.assertEqual(reports[0]["applied_readings"], {})
         self.assertEqual(reports[0]["explicit_readings"], {"未": "み"})
         self.assertEqual(reports[0]["final_kana"], "みだしらない")
+
+    @patch(RETRY, return_value=[])
+    @patch(TRANSCRIBE)
+    def test_ctc_reading_reaches_report_and_final_furigana(self, transcribe, _retry):
+        audio = [0.0] * 80000
+        transcribe.return_value = (
+            object(), audio,
+            [{"text": "あしたのことはわかんない", "start": 1.0, "end": 3.0,
+              "probability": 0.95, "segment_reliable": True}],
+        )
+        line = {
+            "text": "明日のことはわかんない", "start_time": 1.0,
+            "readings": {}, "alignment_readings": {"明日": "あした"},
+        }
+        aligned = [[AlignedToken(line["text"], 1.0, 3.0)]]
+        readings, reports = detect_whisper_readings(audio, 16000, [line], aligned)
+        self.assertEqual(readings, [{"明日": "あした"}])
+        self.assertEqual(reports[0]["dictionary"], "あしたのことはわかんない")
+        self.assertEqual(reports[0]["final_kana"], "あしたのことはわかんない")
+        self.assertEqual(reports[0]["alignment_readings"], {"明日": "あした"})
+        with tempfile.NamedTemporaryFile("w+", encoding="utf-8", suffix=".ass") as stream:
+            stream.write(render_dialogue(line["text"], aligned[0]))
+            stream.flush()
+            apply_furigana_to_ass(stream.name, readings)
+            content = Path(stream.name).read_text(encoding="utf-8")
+        self.assertIn("明日|<あした", content)
+
+    @patch(RETRY, return_value=[])
+    @patch(TRANSCRIBE)
+    def test_explicit_reading_wins_over_overlapping_ctc_reading(self, transcribe, _retry):
+        audio = [0.0] * 80000
+        transcribe.return_value = (object(), audio, [])
+        line = {
+            "text": "明日は", "start_time": 1.0,
+            "readings": {"明": "みょう"},
+            "alignment_readings": {"明日": "あした"},
+        }
+        readings, reports = detect_whisper_readings(
+            audio, 16000, [line], [[AlignedToken(line["text"], 1.0, 2.0)]]
+        )
+        self.assertEqual(readings, [{"明": "みょう"}])
+        self.assertEqual(reports[0]["alignment_readings"], {})
+        self.assertEqual(reports[0]["final_kana"], "みょうひは")
 
     def test_ass_keeps_kana_text_and_contextual_kanji_reading(self):
         lyrics = ["奏でた夢重ね", "まっすぐに照らす瞳"]

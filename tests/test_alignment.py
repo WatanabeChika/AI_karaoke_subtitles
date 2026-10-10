@@ -1,13 +1,43 @@
 import re
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
+import numpy as np
+import torch
+
+from ai_karaoke.alignment.core import align_sequence, build_alignment_sequence
 from ai_karaoke.alignment.harmony import assess_harmony_overlap
 from ai_karaoke.alignment.models import AlignedToken
+from ai_karaoke.alignment.readings import alternate_reading, refine_ambiguous_readings
 from ai_karaoke.alignment.text import build_alignment_units, romanize_pronunciation
 from ai_karaoke.application.generator import build_alignment_report, render_dialogue
 
 
 class AlignmentTests(unittest.TestCase):
+    @patch("ctc_forced_aligner.get_alignments")
+    def test_unknown_audio_is_allowed_at_edges_and_between_lines(self, get_alignments):
+        labels = ["<star>", "a", "<star>", "b", "u", "<star>"]
+        get_alignments.return_value = (
+            [SimpleNamespace(label=label, start=index, end=index)
+             for index, label in enumerate(labels)],
+            np.full(6, -0.2),
+            "[PAD]",
+        )
+        units = [
+            [build_alignment_units("あ")[0]],
+            [build_alignment_units("ぶ")[0]],
+        ]
+        tokens, owners = build_alignment_sequence([0, 1], units)
+
+        aligned = align_sequence(torch.zeros(6, 33), 20.0, tokens, owners, 2)
+
+        self.assertEqual(get_alignments.call_args.args[1], [
+            "<star>", "a", "<star>", "b u", "<star>"
+        ])
+        self.assertEqual([(token.start, token.end) for token in aligned[0]], [(0.02, 0.04)])
+        self.assertEqual([(token.start, token.end) for token in aligned[1]], [(0.06, 0.1)])
+
     def test_harmony_removal_uses_timing_not_text_similarity(self):
         main = [AlignedToken("different main lyric", 10.0, 15.0, 0.5)]
         simultaneous = [AlignedToken("unrelated harmony", 10.5, 14.5, 0.3)]
@@ -52,6 +82,57 @@ class AlignmentTests(unittest.TestCase):
         karaoke_text = render_dialogue(lyric, tokens).rstrip().split(",", 9)[9]
         self.assertEqual(re.sub(r"\{\\kf\d+\}", "", karaoke_text), lyric)
 
+    def test_symbols_stay_visible_without_becoming_ctc_units(self):
+        lyric = "☆ア・ナ・タ♡ A・B…👩‍🎤"
+        units = build_alignment_units(lyric)
+        ctc_tokens, owners = build_alignment_sequence([0], [units])
+
+        self.assertTrue(all(token.strip() for token in ctc_tokens))
+        self.assertNotIn("・", [unit.text for _, unit in owners])
+        aligned = [
+            AlignedToken(unit.text, index, index + 0.2)
+            for index, (_, unit) in enumerate(owners, start=1)
+        ]
+        rendered = render_dialogue(lyric, aligned).rstrip().split(",", 9)[9]
+        self.assertEqual(re.sub(r"\{\\kf\d+\}", "", rendered), lyric)
+
+    def test_empty_dictionary_nodes_around_ellipsis_do_not_enter_ctc(self):
+        lyric = "君の…君のこんなにも"
+        units = build_alignment_units(lyric)
+        ctc_tokens, owners = build_alignment_sequence([0], [units])
+
+        self.assertTrue(ctc_tokens)
+        self.assertTrue(all(unit.text and unit.pronunciation for _, unit in owners))
+        aligned = [
+            AlignedToken(unit.text, index, index + 0.2)
+            for index, (_, unit) in enumerate(owners, start=1)
+        ]
+        rendered = render_dialogue(lyric, aligned).rstrip().split(",", 9)[9]
+        self.assertEqual(re.sub(r"\{\\kf\d+\}", "", rendered), lyric)
+
+    def test_compatibility_kana_and_unicode_digits_are_normalized(self):
+        units = build_alignment_units("ｶﾞｯﾂﾎﾟｰｽﾞ １２③")
+        ctc_tokens, _ = build_alignment_sequence([0], [units])
+
+        self.assertTrue(all(token.strip() for token in ctc_tokens))
+        self.assertEqual(
+            "".join(romanize_pronunciation(unit.pronunciation) for unit in units[:4]),
+            "gattsupoozu",
+        )
+        self.assertEqual([unit.pronunciation for unit in units[-3:]], ["いち", "に", "さん"])
+
+    def test_kana_block_modifiers_never_create_empty_ctc_tokens(self):
+        units = build_alignment_units("くゞ クヾ ㇷ゚ ヷヸヹヺ ー・゛")
+        ctc_tokens, _ = build_alignment_sequence([0], [units])
+
+        self.assertTrue(ctc_tokens)
+        self.assertTrue(all(token.strip() for token in ctc_tokens))
+
+    def test_unreadable_letters_are_not_silently_discarded(self):
+        units = build_alignment_units("한")
+        with self.assertRaisesRegex(ValueError, "Cannot romanize lyric unit"):
+            build_alignment_sequence([0], [units])
+
     def test_report_flags_drift_without_rewriting_timestamps(self):
         report = build_alignment_report(
             [{"text": "歌", "start_time": 1.0}],
@@ -73,6 +154,27 @@ class AlignmentTests(unittest.TestCase):
             [("頬", "hoho"), ("を", "wo"), ("きょ", "kyo"), ("う", "u"),
              ("も", "mo"), ("ず", "zu"), ("っと", "tto")],
         )
+
+    def test_ambiguous_kanji_offers_an_independent_alignment_reading(self):
+        unit = build_alignment_units("明日")[0]
+        self.assertEqual(unit.pronunciation, "あす")
+        self.assertEqual(alternate_reading(unit), "あした")
+
+    def test_repeated_word_cannot_create_a_line_wide_ctc_reading(self):
+        units = build_alignment_units("明日と明日")
+        aligned = [[
+            AlignedToken(unit.text, index, index + 0.2, 0.01)
+            for index, unit in enumerate(units)
+        ]]
+        lines = [{
+            "text": "明日と明日", "start_time": 0.0, "readings": {},
+        }]
+
+        refine_ambiguous_readings(
+            torch.zeros(100, 33), 20.0, lines, [units], aligned, 2.0
+        )
+
+        self.assertNotIn("alignment_readings", lines[0])
 
     def test_numeric_alignment_units_have_selectable_reading(self):
         japanese = build_alignment_units("1,2,3で地面蹴って")
