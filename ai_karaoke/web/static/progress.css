@@ -1,0 +1,63 @@
+.overall-row { display: flex; justify-content: space-between; gap: 1rem; align-items: baseline; }
+.overall-number { font-size: 1.8rem; font-weight: 750; letter-spacing: -0.04em; }
+.progress-track {
+  height: 0.48rem;
+  margin: 0.75rem 0 1.3rem;
+  overflow: hidden;
+  background: var(--paper-deep);
+  border-radius: 1rem;
+}
+.progress-fill {
+  width: 0%;
+  height: 100%;
+  background: var(--accent);
+  transform-origin: left;
+  transition: width 300ms ease;
+}
+.empty-state {
+  display: grid;
+  min-height: 12rem;
+  place-items: center;
+  padding: 1.5rem;
+  color: var(--muted);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+  text-align: center;
+}
+.empty-mark {
+  display: block;
+  margin-bottom: 0.6rem;
+  color: var(--accent);
+  font-family: "Palatino Linotype", serif;
+  font-size: 2rem;
+  letter-spacing: 0.12em;
+}
+.task-list { display: grid; gap: 0.7rem; margin: 0; padding: 0; list-style: none; }
+.task-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.25rem 0.7rem;
+  padding: 0.82rem;
+  background: rgba(231, 225, 214, 0.52);
+  border-radius: var(--radius-sm);
+}
+.task-title { overflow: hidden; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.task-stage { color: var(--muted); font-size: 0.78rem; }
+.task-percent {
+  grid-row: 1 / 3;
+  grid-column: 2;
+  align-self: center;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.task-item.completed .task-percent { color: var(--success); }
+.task-item.failed .task-stage, .task-item.failed .task-percent { color: var(--danger); }
+.batch-actions { display: grid; gap: 0.55rem; margin-top: 1rem; }
+.notice {
+  margin-top: 1rem;
+  padding: 0.8rem 0.9rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.84rem;
+}
+.notice.error { color: var(--danger); background: var(--danger-soft); }
+.notice.success { color: var(--success); background: var(--success-soft); }

@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="本地批量生成、试听和审核 AI 卡拉 OK ASS 字幕。">
+  <meta name="theme-color" content="#f2efe8">
+  <title>AI Karaoke · 生成与审核</title>
+  <link rel="icon" href="/assets/mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+
+  <header class="shell masthead">
+    <div class="masthead-title">
+      <p class="eyebrow">AI karaoke workroom</p>
+      <h1>生成，也试听。</h1>
+    </div>
+    <p class="masthead-note">从人声分离到逐音节时轴，再到逐首试听与修订。批量任务依次处理，每个结果都保留自己的审核现场。</p>
+  </header>
+
+  <main id="main" class="shell">
+    <section class="process-map" aria-labelledby="processTitle">
+      <div class="process-intro">
+        <span class="section-kicker">固定处理链路</span>
+        <h2 id="processTitle">从原曲，到可以跟唱。</h2>
+        <p>模型已经按卡拉 OK 场景固定下来，日常使用只需准备音频、歌词和输出位置。</p>
+      </div>
+      <ol class="process-steps">
+        <li><span>01</span><strong>拆出歌声</strong><small>Mel-Band RoFormer 分离人声与伴奏</small></li>
+        <li><span>02</span><strong>整理歌词</strong><small>读取 LRC、显式注音与和声结构</small></li>
+        <li><span>03</span><strong>逐音节对齐</strong><small>MMS Karaoke CTC 生成精细时间轴</small></li>
+        <li><span>04</span><strong>核对并渲染</strong><small>Whisper + kanjiconv 校正读音并生成 ASS</small></li>
+      </ol>
+    </section>
+
+    <section class="workspace" aria-label="任务设置与进度">
+      <article class="setup-panel">
+        <div class="section-heading">
+          <div>
+            <span class="section-kicker">任务输入</span>
+            <h2>准备歌曲</h2>
+          </div>
+          <span class="section-index">01</span>
+        </div>
+
+        <form id="runForm" class="form-stack">
+          <div class="field">
+            <label for="song_paths">歌曲文件</label>
+            <div class="path-control textarea-control">
+              <textarea id="song_paths" name="song_paths" rows="4" placeholder="每行一个音频路径，可一次选择多首"></textarea>
+              <button type="button" class="button-secondary button-small picker-button" data-pick-field="songs">选择文件</button>
+            </div>
+            <p class="field-note">支持 FLAC、WAV、MP3、M4A、AAC、OGG、OPUS、WMA。批量时读取每首歌旁边的同名 LRC。</p>
+          </div>
+
+          <div class="field">
+            <label for="input_dir">或扫描歌曲目录</label>
+            <div class="path-control">
+              <input id="input_dir" name="input_dir" placeholder="只扫描该目录当前层级">
+              <button type="button" class="button-secondary button-small picker-button" data-pick-field="input_dir">选择目录</button>
+            </div>
+          </div>
+
+          <div class="field-row">
+            <div class="field">
+              <label for="output">输出目录</label>
+              <div class="path-control">
+                <input id="output" name="output" required placeholder="处理结果保存位置">
+                <button type="button" class="button-secondary button-small picker-button" data-pick-field="output">选择</button>
+              </div>
+            </div>
+            <div class="field">
+              <label for="lang">歌曲语言</label>
+              <select id="lang" name="lang">
+                <option value="ja" selected>日语 · ja</option>
+                <option value="zh">中文 · zh</option>
+                <option value="en">英语 · en</option>
+              </select>
+            </div>
+          </div>
+
+          <fieldset class="palette-panel">
+            <legend>字幕配色</legend>
+            <div class="palette-grid">
+              <div class="field">
+                <label for="kara_primary_color">待唱颜色</label>
+                <div class="color-control">
+                  <input id="kara_primary_color" name="kara_primary_color" value="{{DEFAULT_PRIMARY_COLOR}}">
+                  <input id="primaryColorPicker" type="color" value="#ffffff" aria-label="选择待唱颜色">
+                </div>
+              </div>
+              <div class="field">
+                <label for="kara_accent_color">唱过颜色</label>
+                <div class="color-control">
+                  <input id="kara_accent_color" name="kara_accent_color" value="{{DEFAULT_ACCENT_COLOR}}">
+                  <input id="accentColorPicker" type="color" value="#d81c2f" aria-label="选择唱过颜色">
+                </div>
+              </div>
+            </div>
+          </fieldset>
+
+          <details class="advanced">
+            <summary>高级设置 <span>读音、性能与时序</span></summary>
+            <div class="advanced-grid">
+              <div class="field span-two">
+                <label for="lyric">单曲 LRC（可选）</label>
+                <div class="path-control">
+                  <input id="lyric" name="lyric" placeholder="仅单曲任务可手动指定；批量任务留空">
+                  <button type="button" class="button-secondary button-small picker-button" data-pick-field="lyric">选择</button>
+                </div>
+              </div>
+
+              <div class="aligned-pair span-two">
+                <div class="field">
+                  <label for="ctc_batch_size">CTC batch size</label>
+                  <input id="ctc_batch_size" name="ctc_batch_size" type="number" min="1" step="1" value="1">
+                  <p class="field-note">6GB 显存建议保持 1。</p>
+                </div>
+                <div class="field">
+                  <label for="ctc_number_reading">数字读法</label>
+                  <select id="ctc_number_reading" name="ctc_number_reading">
+                    <option value="auto" selected>自动判断</option>
+                    <option value="ja">按日语读</option>
+                    <option value="en">按英语读</option>
+                  </select>
+                  <p class="field-note">用于 1, 2, 3 等阿拉伯数字。</p>
+                </div>
+              </div>
+
+              <div class="aligned-pair span-two">
+                <div class="field">
+                  <label for="furigana_whisper_model">日语读音检查模型大小</label>
+                  <select id="furigana_whisper_model" name="furigana_whisper_model">{{FURIGANA_MODEL_OPTIONS}}</select>
+                  <p class="field-note">模型越大通常越准确，也会更慢、更占显存。</p>
+                </div>
+                <div class="field">
+                  <span class="field-label">读音检查</span>
+                  <label class="checkbox-field toggle-panel" for="whisper_readings">
+                    <input id="whisper_readings" name="whisper_readings" type="checkbox" checked>
+                    <strong>启用 Whisper 日语读音检查</strong>
+                  </label>
+                  <p class="field-note">默认开启；关闭后只使用 LRC 注音与词典读音。</p>
+                </div>
+              </div>
+
+              <div class="field">
+                <label for="kara_advance_ms">歌词提前显示（ms）</label>
+                <input id="kara_advance_ms" name="kara_advance_ms" type="number" min="0" step="1" value="{{DEFAULT_ADVANCE_MS}}">
+              </div>
+              <div class="field">
+                <label for="kara_sep_threshold_ms">新序列间隔（ms）</label>
+                <input id="kara_sep_threshold_ms" name="kara_sep_threshold_ms" type="number" min="0" step="1" value="{{DEFAULT_SEP_THRESHOLD_MS}}">
+              </div>
+            </div>
+          </details>
+
+          <div class="submit-row">
+            <p class="submit-note">按顺序处理；单首失败不会阻断后续歌曲。</p>
+            <button id="runButton" type="submit">开始生成</button>
+          </div>
+        </form>
+      </article>
+
+      <aside class="progress-panel" aria-live="polite">
+        <div class="section-heading compact-heading">
+          <div>
+            <span class="section-kicker">处理队列</span>
+            <h2>当前进度</h2>
+          </div>
+          <span class="section-index">02</span>
+        </div>
+        <div class="overall-row">
+          <span id="overallLabel">尚未开始</span>
+          <span id="overallNumber" class="overall-number mono">0%</span>
+        </div>
+        <div class="progress-track" aria-hidden="true"><div id="progressFill" class="progress-fill"></div></div>
+
+        <div id="queueEmpty" class="empty-state">
+          <div><span class="empty-mark">•••</span>提交任务后，这里会显示每首歌的当前步骤。</div>
+        </div>
+        <ol id="taskList" class="task-list" hidden></ol>
+        <div id="batchActions" class="batch-actions" hidden>
+          <a id="downloadAss" class="button-link" href="#">打包下载 ASS</a>
+          <a id="downloadEverything" class="button-link button-secondary" href="#">打包下载音频与 ASS</a>
+        </div>
+        <div id="notice" class="notice" hidden></div>
+      </aside>
+    </section>
+
+    <section id="reviewSection" class="review-section" hidden>
+      <div class="review-heading">
+        <div>
+          <p class="eyebrow">Listening desk</p>
+          <h2>边听，边校对。</h2>
+          <p>预览按当前 ASS 的 K1/K2 行、注音和 k 值平滑扫色。点击歌词可跳到对应位置，修改后可直接保存。</p>
+        </div>
+      </div>
+      <div id="reviewList" class="review-list"></div>
+    </section>
+  </main>
+
+  <footer class="shell">
+    <span>所有音频、字幕与修改都留在运行服务的本机。</span>
+    <span>AI Karaoke local review</span>
+  </footer>
+
+  <script type="module" src="/assets/app.js"></script>
+</body>
+</html>

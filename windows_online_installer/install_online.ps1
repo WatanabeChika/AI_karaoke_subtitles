@@ -10,13 +10,22 @@ Set-StrictMode -Version Latest
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectFiles = @(
     "main.py",
+    "web_gui.py",
+    "requirements.txt"
+)
+$projectDirectories = @("ai_karaoke")
+$legacyFiles = @(
+    "pipeline.py",
+    "cli_output.py",
     "separator.py",
     "aligner.py",
+    "ctc_alignment.py",
+    "lyrics.py",
     "furigana.py",
-    "kara_style.py",
-    "web_gui.py",
-    "web_gui.html"
+    "kara_style.py"
 )
+
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 function Resolve-SourceRoot {
     param([string]$ScriptDirectory, [string[]]$RequiredFiles)
@@ -53,7 +62,7 @@ function Download-Micromamba {
         try {
             Write-Host "Downloading micromamba from: $url"
             Invoke-WebRequest -Uri $url -OutFile $OutputPath -UseBasicParsing
-            if ((Test-Path $OutputPath) -and ((Get-Item $OutputPath).Length -gt 0)) {
+            if ((Test-Path $OutputPath) -and ((Get-Item $OutputPath).Length -gt 1MB)) {
                 return
             }
         } catch {
@@ -63,10 +72,46 @@ function Download-Micromamba {
     throw "Failed to download micromamba."
 }
 
+function Assert-NativeSuccess {
+    param([string]$Action)
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Action failed with exit code $LASTEXITCODE."
+    }
+}
+
+function Install-PytorchRuntime {
+    param(
+        [string]$PythonExe,
+        [bool]$HasNvidia
+    )
+
+    if ($HasNvidia) {
+        foreach ($cudaTag in @("cu129", "cu128", "cu126")) {
+            $indexUrl = "https://download.pytorch.org/whl/$cudaTag"
+            Write-Host "Trying CUDA-enabled torch runtime: $cudaTag"
+            & $PythonExe -m pip install --upgrade torch torchaudio torchcodec --index-url $indexUrl
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "Installed CUDA-enabled torch runtime: $cudaTag"
+                return
+            }
+            Write-Host "No compatible $cudaTag wheel was installed; trying the next supported index."
+        }
+
+        Write-Host "CUDA-specific wheels were unavailable; trying the default PyPI runtime."
+        & $PythonExe -m pip install --upgrade torch torchaudio torchcodec
+        Assert-NativeSuccess "PyTorch runtime installation"
+        return
+    }
+
+    Write-Host "No NVIDIA GPU detected; installing the CPU torch runtime."
+    & $PythonExe -m pip install --upgrade torch torchaudio torchcodec --index-url https://download.pytorch.org/whl/cpu
+    Assert-NativeSuccess "CPU PyTorch runtime installation"
+}
+
 function Write-LauncherBat {
     param(
         [string]$LauncherPath,
-        [string]$InstallPath,
         [string]$HostValue,
         [int]$PortValue
     )
@@ -74,7 +119,7 @@ function Write-LauncherBat {
     $content = @"
 @echo off
 setlocal
-set "ROOT=$InstallPath"
+for %%I in ("%~dp0.") do set "ROOT=%%~fI"
 set "HOST=$HostValue"
 set "PORT=$PortValue"
 set "APP_CACHE=%ROOT%\cache"
@@ -88,10 +133,19 @@ set "HF_HOME=%APP_CACHE%\huggingface"
 set "HF_HUB_CACHE=%APP_CACHE%\huggingface\hub"
 set "TRANSFORMERS_CACHE=%APP_CACHE%\huggingface\transformers"
 set "NUMBA_CACHE_DIR=%APP_CACHE%\numba"
+set "HF_HUB_DISABLE_SYMLINKS_WARNING=1"
+set "PYTHONUTF8=1"
+set "PYTHONUNBUFFERED=1"
+set "PATH=%ROOT%\env;%ROOT%\env\Scripts;%ROOT%\env\Library\bin;%PATH%"
 title AI Karaoke Web GUI Server
 
 if not exist "%ROOT%\env\python.exe" (
   echo Runtime environment missing: %ROOT%\env
+  pause
+  exit /b 1
+)
+if not exist "%ROOT%\app\web_gui.py" (
+  echo Application entry point missing: %ROOT%\app\web_gui.py
   pause
   exit /b 1
 )
@@ -110,7 +164,7 @@ if not "%CODE%"=="0" (
   echo Web GUI server exited.
 )
 pause
-endlocal
+endlocal & exit /b %CODE%
 "@
     Set-Content -LiteralPath $LauncherPath -Value $content -Encoding ASCII
 }
@@ -118,7 +172,7 @@ endlocal
 Write-Host "AI Karaoke Web GUI Online Installer"
 Write-Host "Install root: $InstallRoot"
 
-$sourceRoot = Resolve-SourceRoot -ScriptDirectory $scriptDir -RequiredFiles $projectFiles
+$sourceRoot = Resolve-SourceRoot -ScriptDirectory $scriptDir -RequiredFiles ($projectFiles + $projectDirectories)
 
 $appRoot = Join-Path $InstallRoot "app"
 $binRoot = Join-Path $InstallRoot "bin"
@@ -134,11 +188,26 @@ $pythonExe = Join-Path $envRoot "python.exe"
 
 New-Item -ItemType Directory -Force -Path $InstallRoot, $appRoot, $binRoot, $logsRoot, $pipCacheRoot, $runtimeCacheRoot | Out-Null
 
+if (Test-Path (Join-Path $appRoot "ai_karaoke")) {
+    Remove-Item -LiteralPath (Join-Path $appRoot "ai_karaoke") -Recurse -Force
+}
+if (Test-Path (Join-Path $appRoot "web_gui")) {
+    Remove-Item -LiteralPath (Join-Path $appRoot "web_gui") -Recurse -Force
+}
+foreach ($legacyFile in $legacyFiles) {
+    $legacyPath = Join-Path $appRoot $legacyFile
+    if (Test-Path $legacyPath) {
+        Remove-Item -LiteralPath $legacyPath -Force
+    }
+}
 foreach ($f in $projectFiles) {
     Copy-Item -LiteralPath (Join-Path $sourceRoot $f) -Destination (Join-Path $appRoot $f) -Force
 }
+foreach ($directory in $projectDirectories) {
+    Copy-Item -LiteralPath (Join-Path $sourceRoot $directory) -Destination $appRoot -Recurse -Force
+}
 
-if (-not (Test-Path $micromambaExe)) {
+if ((-not (Test-Path $micromambaExe)) -or ((Get-Item $micromambaExe).Length -le 1MB)) {
     Download-Micromamba -OutputPath $micromambaExe
 }
 
@@ -151,14 +220,36 @@ $env:HF_HOME = (Join-Path $runtimeCacheRoot "huggingface")
 $env:HF_HUB_CACHE = (Join-Path $runtimeCacheRoot "huggingface\hub")
 $env:TRANSFORMERS_CACHE = (Join-Path $runtimeCacheRoot "huggingface\transformers")
 $env:NUMBA_CACHE_DIR = (Join-Path $runtimeCacheRoot "numba")
+$env:HF_HUB_DISABLE_SYMLINKS_WARNING = "1"
+$env:PYTHONUTF8 = "1"
+$env:PIP_NO_INPUT = "1"
 
 if (-not (Test-Path $pythonExe)) {
     Write-Host "Creating isolated runtime environment..."
-    & $micromambaExe create --yes --root-prefix $mambaRoot --prefix $envRoot -c conda-forge python=3.10 ffmpeg
+    & $micromambaExe create --yes --root-prefix $mambaRoot --prefix $envRoot -c conda-forge python=3.10 ffmpeg git
+    Assert-NativeSuccess "Runtime environment creation"
+} else {
+    Write-Host "Refreshing FFmpeg and Git in the existing runtime..."
+    & $micromambaExe install --yes --root-prefix $mambaRoot --prefix $envRoot -c conda-forge ffmpeg git
+    Assert-NativeSuccess "Runtime dependency refresh"
 }
+
+$env:PATH = "$envRoot;$envRoot\Scripts;$envRoot\Library\bin;$env:PATH"
 
 Write-Host "Installing Python dependencies (online)..."
 & $pythonExe -m pip install --upgrade pip
+Assert-NativeSuccess "pip upgrade"
+
+Write-Host "Removing packages from retired alignment and separation backends..."
+& $pythonExe -m pip uninstall --yes qwen-asr qwen-fa-ultra demucs
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Obsolete package cleanup reported a warning; continuing with the fixed pipeline."
+}
+$huggingFaceHubCache = Join-Path $runtimeCacheRoot "huggingface\hub"
+if (Test-Path $huggingFaceHubCache) {
+    Get-ChildItem -LiteralPath $huggingFaceHubCache -Directory -Filter "models--Qwen--*" |
+        Remove-Item -Recurse -Force
+}
 
 $hasNvidia = $false
 try {
@@ -174,25 +265,24 @@ try {
     $hasNvidia = $false
 }
 
-if ($hasNvidia) {
-    Write-Host "Installing CUDA-enabled torch/torchaudio (cu121)..."
-    try {
-        & $pythonExe -m pip install --upgrade torch torchaudio --index-url https://download.pytorch.org/whl/cu121
-    } catch {
-        Write-Host "CUDA wheel install failed, falling back to default torch packages."
-        & $pythonExe -m pip install --upgrade torch torchaudio
-    }
-} else {
-    Write-Host "No NVIDIA GPU detected, installing default torch packages."
-    & $pythonExe -m pip install --upgrade torch torchaudio
+Install-PytorchRuntime -PythonExe $pythonExe -HasNvidia $hasNvidia
+
+Write-Host "Installing AI Karaoke runtime requirements..."
+& $pythonExe -m pip install --upgrade -r (Join-Path $appRoot "requirements.txt")
+Assert-NativeSuccess "AI Karaoke dependency installation"
+
+Write-Host "Verifying the installed application..."
+& $pythonExe -m compileall -q $appRoot
+Assert-NativeSuccess "Application bytecode check"
+Push-Location $appRoot
+try {
+    & $pythonExe -c "import ai_karaoke, torch, torchaudio, torchcodec, stable_whisper, ctc_forced_aligner, librosa, soundfile, kanjiconv, pykakasi, transformers, mel_band_roformer; from ai_karaoke.web.handler import KaraokeWebHandler; print('torch=', torch.__version__, 'cuda_available=', torch.cuda.is_available(), 'imports=ok')"
+    Assert-NativeSuccess "Application import check"
+} finally {
+    Pop-Location
 }
 
-& $pythonExe -m pip install --upgrade stable-ts demucs librosa numpy scipy soundfile pykakasi
-
-Write-Host "Verifying CUDA availability in installed runtime..."
-& $pythonExe -c "import torch; print('torch=', torch.__version__, ' cuda_available=', torch.cuda.is_available())"
-
-Write-LauncherBat -LauncherPath $launcherBat -InstallPath $InstallRoot -HostValue $BindHost -PortValue $Port
+Write-LauncherBat -LauncherPath $launcherBat -HostValue $BindHost -PortValue $Port
 
 $manifest = [ordered]@{
     install_root = $InstallRoot

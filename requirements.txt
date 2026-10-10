@@ -1,0 +1,9 @@
+# Install torch, torchaudio and torchcodec for the target CPU/CUDA platform first.
+stable-ts[fw]>=2.19.1,<2.20
+librosa>=0.11,<0.12
+soundfile>=0.12,<0.15
+kanjiconv>=0.3.1,<0.4
+pykakasi>=2.3,<3
+transformers>=4.57,<4.58
+melband-roformer-infer>=0.1.5,<0.2
+ctc-forced-aligner @ git+https://github.com/MahmoudAshraf97/ctc-forced-aligner.git@64293cc6d711e57666c4a8b098e9fd93b381fd88

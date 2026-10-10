@@ -1,0 +1,24 @@
+@media (max-width: 62rem) {
+  .masthead { grid-template-columns: 1fr; gap: 1.3rem; }
+  .masthead-note { max-width: 42rem; }
+  .process-map { grid-template-columns: 1fr; gap: 1rem; }
+  .process-intro h2, .process-intro p { max-width: 42rem; }
+  .workspace { grid-template-columns: 1fr; }
+  .progress-panel { position: static; min-height: 0; }
+  .review-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 42rem) {
+  .shell { width: min(100% - 1rem, 92rem); }
+  .masthead { padding-top: 2rem; }
+  h1 { font-size: clamp(2.35rem, 12vw, 3.6rem); white-space: normal; }
+  .process-steps { grid-template-columns: 1fr; }
+  .field-row, .palette-grid, .advanced-grid, .aligned-pair { grid-template-columns: 1fr; }
+  .span-two { grid-column: auto; }
+  .submit-row, .review-heading, footer { align-items: stretch; flex-direction: column; }
+  .path-control { grid-template-columns: 1fr; }
+  .review-body { padding-inline: 0.7rem; }
+  .review-card > summary { padding-inline: 0.9rem; }
+  .caption-stage { padding-inline: 0.75rem; }
+  details.advanced > summary span { display: none; }
+}
