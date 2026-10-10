@@ -1,6 +1,6 @@
-# AI Karaoke
+# AI Karaoke Subtitles
 
-AI Karaoke 从歌曲音频和 LRC 歌词生成可审核、可编辑的卡拉 OK `ASS` 字幕。项目重点面向日语歌曲，在 6GB 显存设备上也能运行完整链路。
+AI Karaoke Subtitles 从歌曲音频和 LRC 歌词生成可审核、可编辑的卡拉 OK `ASS` 字幕。项目重点面向日语歌曲，在 6GB 显存设备上也能运行完整链路。
 
 ```text
 原曲 + LRC
