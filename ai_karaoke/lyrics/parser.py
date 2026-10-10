@@ -16,6 +16,11 @@ READING = re.compile(
     r"(?P<kana>[ぁ-ゖァ-ヿｦ-ﾟｰﾞﾟー]+)[）)]"
 )
 ANNOTATION = re.compile(r"^\s*(?:\[.*?\]|【.*?】)\s*$")
+PLACEHOLDER = re.compile(r"^(?:undefined|null|none|n/?a)$", re.IGNORECASE)
+THEME_CREDIT = re.compile(
+    r"^(?:TV|テレビ)?アニメ.+(?:オープニング|エンディング)(?:テーマ)?$",
+    re.IGNORECASE,
+)
 INLINE_HARMONY = re.compile(r"[（(](?P<body>[^()（）]+)[）)]")
 # These characters are strong signals that a parenthetical line is a Chinese
 # translation rather than a Japanese harmony.  Parentheses themselves are not
@@ -30,10 +35,17 @@ SIMPLIFIED_CHINESE_MARKERS = set(
 def _split_translation(text: str) -> str:
     for i, ch in enumerate(text):
         if ch in "/／" and (
-            ch == "／" or (i > 0 and i + 1 < len(text) and text[i - 1].isspace() and text[i + 1].isspace())
+            ch == "／"
+            or (i == 0 and i + 1 < len(text) and text[i + 1].isspace())
+            or (i > 0 and i + 1 < len(text) and text[i - 1].isspace() and text[i + 1].isspace())
         ):
             return text[:i].strip()
     return text.strip()
+
+
+def _is_non_lyric_text(text: str) -> bool:
+    """Reject provider placeholders and timestamped track-description rows."""
+    return bool(PLACEHOLDER.fullmatch(text) or THEME_CREDIT.fullmatch(text))
 
 
 def _clean_parenthetical_gap(text: str) -> str:
@@ -174,6 +186,8 @@ def parse_lrc_data_strict(lrc_path: str, lang: str = "ja") -> List[Dict]:
             if not text or STAFF.match(text) or ANNOTATION.fullmatch(text):
                 continue
             text = _split_translation(text)
+            if not text or _is_non_lyric_text(text):
+                continue
             # Explicit parenthetical readings are metadata, not harmony.
             text, readings = _extract_readings(text)
             if not _has_lyric_content(text):

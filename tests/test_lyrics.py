@@ -5,6 +5,15 @@ from ai_karaoke.lyrics.parser import parse_lrc_data_strict, remove_inline_harmon
 
 
 class LyricsTests(unittest.TestCase):
+    def test_provider_placeholders_and_theme_credits_are_not_lyrics(self):
+        lines = self.parse(
+            "[00:01.00] / <☆SOLO!个说>\n"
+            "[00:02.00]undefined\n"
+            "[00:03.00]TVアニメ「作品名」オープニングテーマ\n"
+            "[00:04.00]本当の歌詞\n"
+        )
+        self.assertEqual([line["text"] for line in lines], ["本当の歌詞"])
+
     def parse(self, content):
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".lrc") as stream:
             stream.write(content)

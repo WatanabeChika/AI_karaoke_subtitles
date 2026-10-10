@@ -11,10 +11,41 @@ from ai_karaoke.alignment.harmony import assess_harmony_overlap
 from ai_karaoke.alignment.models import AlignedToken
 from ai_karaoke.alignment.readings import alternate_reading, refine_ambiguous_readings
 from ai_karaoke.alignment.text import build_alignment_units, romanize_pronunciation
+from ai_karaoke.alignment.windows import resolve_primary_overlaps
 from ai_karaoke.application.generator import build_alignment_report, render_dialogue
 
 
 class AlignmentTests(unittest.TestCase):
+    def test_empty_ctc_window_has_an_actionable_error(self):
+        units = [[build_alignment_units("あ")[0]]]
+        tokens, owners = build_alignment_sequence([0], units)
+        with self.assertRaisesRegex(ValueError, "CTC window is too short"):
+            align_sequence(torch.zeros(0, 33), 20.0, tokens, owners, 1)
+
+    @patch("ai_karaoke.alignment.windows.align_sequence")
+    def test_overlap_resolution_expands_transitive_conflict_group(self, align):
+        aligned = [
+            [AlignedToken("前", 6.88, 8.16)],
+            [AlignedToken("一", 8.22, 9.14)],
+            [AlignedToken("二", 6.22, 6.98)],
+            [AlignedToken("三", 7.62, 9.44)],
+            [AlignedToken("後", 19.96, 22.26)],
+        ]
+        units = [build_alignment_units(text) for text in ("前", "一", "二", "三", "後")]
+        replacement = [[] for _ in aligned]
+        replacement[1] = [AlignedToken("一", 8.2, 9.0)]
+        replacement[2] = [AlignedToken("二", 9.0, 10.0)]
+        replacement[3] = [AlignedToken("三", 10.0, 11.0)]
+        align.return_value = replacement
+
+        resolve_primary_overlaps(
+            torch.zeros(1500, 33), 20.0, list(range(5)), units, aligned, 30.0
+        )
+
+        owner_lines = {owner[0] for owner in align.call_args.args[3]}
+        self.assertEqual(owner_lines, {1, 2, 3})
+        self.assertGreater(len(align.call_args.args[0]), 0)
+
     @patch("ctc_forced_aligner.get_alignments")
     def test_unknown_audio_is_allowed_at_edges_and_between_lines(self, get_alignments):
         labels = ["<star>", "a", "<star>", "b", "u", "<star>"]

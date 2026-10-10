@@ -166,12 +166,15 @@ def resolve_primary_overlaps(
     position = 0
     while position + 1 < len(primary_indices):
         last = position
+        conflict_end = line_end(aligned[primary_indices[last]])
         while (
             last + 1 < len(primary_indices)
-            and line_end(aligned[primary_indices[last]])
-            > line_start(aligned[primary_indices[last + 1]])
+            and conflict_end > line_start(aligned[primary_indices[last + 1]])
         ):
             last += 1
+            conflict_end = max(
+                conflict_end, line_end(aligned[primary_indices[last]])
+            )
         if last == position:
             position += 1
             continue
@@ -184,6 +187,12 @@ def resolve_primary_overlaps(
         frame_start = math.ceil(window_start * 1000 / stride_ms)
         frame_end = int(window_end * 1000 / stride_ms)
         indices = primary_indices[position : last + 1]
+        if frame_end <= frame_start:
+            texts = [units_per_line[index][0].text for index in indices]
+            raise RuntimeError(
+                "Cannot resolve overlapping lyric lines inside an empty audio window: "
+                f"{window_start:.3f}s to {window_end:.3f}s ({texts!r})"
+            )
         tokens, owners = build_alignment_sequence(indices, units_per_line)
         local = align_sequence(
             emissions[frame_start:frame_end],

@@ -108,6 +108,18 @@ def align_sequence(
     from ctc_forced_aligner import get_alignments
 
     alignment_tokens, lyric_mask = _with_unknown_audio_tokens(tokens, owners)
+    label_sequence = [
+        label for token in alignment_tokens for label in token.split()
+    ]
+    repeated_labels = sum(
+        left == right for left, right in zip(label_sequence, label_sequence[1:])
+    )
+    minimum_frames = len(label_sequence) + repeated_labels
+    if len(emissions) < minimum_frames:
+        raise ValueError(
+            "CTC window is too short for its transcript: "
+            f"{len(emissions)} audio frames for at least {minimum_frames} alignment frames"
+        )
     segments, scores, blank = get_alignments(
         _calibrate_unknown_audio_score(emissions),
         alignment_tokens,
